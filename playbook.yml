@@ -10,12 +10,16 @@
       - example
       - rhel_8_profiles
       - rhel_8_evaluation
+      - existing_rhel_ds_xml_files
+      - ds_files_duplication
+      - ds_files_substitution
 
     output_extension_list:
       - json
       - stdout
       - stderr
 
+    remote: /home/vagrant
     local: /vagrant
     out: "{{ local }}/out"
     reports: "{{ local }}/reports"
@@ -53,6 +57,36 @@
           package:
             name: "{{ package_list }}"
             state: present
+
+    - name: openscap for centos
+      become: no
+      block:
+        - name: existing rhel?-ds.xml files
+          find:
+            use_regex: yes
+            file_type: file
+            paths:
+              - /usr/share/xml/scap/ssg/content
+            patterns:
+              - ssg-rhel\d+-ds\.xml
+          register: existing_rhel_ds_xml_files
+        - name: centos?-ds.xml files duplication
+          loop_control:
+            label: "{{ remote }}/{{ item.path|basename|replace('rhel','centos',1) }}"
+          loop: "{{ existing_rhel_ds_xml_files.files }}"
+          copy:
+            src: "{{ item.path }}"
+            dest: "{{ remote }}/{{ item.path|basename|replace('rhel','centos',1) }}"
+          register: ds_files_duplication
+        - name: centos?-ds.xml files substitution
+          loop_control:
+            label: "{{ item.dest }}"
+          loop: "{{ ds_files_duplication.results }}"
+          replace:
+            path: "{{ item.dest }}"
+            regexp: \bcpe:/o:redhat:enterprise_linux:(\d+)\b
+            replace: cpe:/o:centos:centos:\g<1>
+          register: ds_files_substitution
 
     - name: oscap scanner tests
       become: no
@@ -114,3 +148,4 @@
           copy:
             dest: "{{ out }}/{{ item.0 }}.{{ item.1 }}"
             content: "{{ lookup('vars', item.0)[item.1] }}"
+          when: item.1 in lookup('vars', item.0)
