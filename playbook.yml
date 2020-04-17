@@ -1,0 +1,116 @@
+---
+- hosts: default
+
+  vars:
+    package_list:
+      - openscap-scanner
+      - scap-security-guide
+
+    output_variable_list:
+      - example
+      - rhel_8_profiles
+      - rhel_8_evaluation
+
+    output_extension_list:
+      - json
+      - stdout
+      - stderr
+
+    local: /vagrant
+    out: "{{ local }}/out"
+    reports: "{{ local }}/reports"
+
+  tasks:
+    - name: local setup
+      become: yes
+      block:
+        - name: local directories
+          loop:
+            - "{{ out }}"
+            - "{{ reports }}"
+          loop_control:
+            label: "{{ item }}"
+          file:
+            state: directory
+            path: "{{ item }}"
+
+    - name: system configuration changes that might require a reboot
+      become: yes
+      block:
+        - name: selinux targeted enforcing
+          selinux:
+            policy: targeted
+            state: enforcing
+          register: selinux_status
+        - name: reboot if necessary
+          when: selinux_status.reboot_required
+          reboot:
+
+    - name: system configuration changes
+      become: yes
+      block:
+        - name: packages
+          package:
+            name: "{{ package_list }}"
+            state: present
+
+    - name: oscap scanner tests
+      become: no
+      block:
+        - name: example
+          # https://www.open-scap.org/getting-started/
+          command:
+            argv:
+              - oscap
+              - info
+              - /usr/share/xml/scap/ssg/content/ssg-rhel6-ds.xml
+          register: example
+        - name: rhel 8 profiles
+          command:
+            argv:
+              - oscap
+              - info
+              - --fetch-remote-resources
+              - /usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml
+          register: rhel_8_profiles
+        - name: rhel 8 evaluation
+          become: yes
+          command:
+            argv:
+              - oscap
+              - xccdf
+              - eval
+              - --profile
+              - xccdf_org.ssgproject.content_profile_ospp
+              - --results-arf
+              - "{{ reports }}/rhel_8_evaluation.arf.xml"
+              - --report
+              - "{{ reports }}/rhel_8_evaluation.report.html"
+              - /usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml
+          register: rhel_8_evaluation
+
+      always:
+        - name: copy selinux bug workaround
+          when: >-
+            ansible_selinux.status == 'enabled'
+            and ansible_python.version.major == 3
+          loop: "{{ output_variable_list | product(output_extension_list) | list }}"
+          loop_control:
+            label: "{{ out }}/{{ item.0 }}.{{ item.1 }}"
+          file:
+            path: "{{ out }}/{{ item.0 }}.{{ item.1 }}"
+            state: touch
+        - name: variable json
+          loop: "{{ output_variable_list }}"
+          loop_control:
+            label: "{{ out }}/{{ item }}.json"
+          copy:
+            dest: "{{ out }}/{{ item }}.json"
+            content: "{{ lookup('vars', item) | to_nice_json }}"
+        - name: variable output
+          loop: "{{ output_variable_list | product(['stdout','stderr']) | list }}"
+          loop_control:
+            label: "{{ out }}/{{ item.0 }}.{{ item.1 }}"
+          copy:
+            dest: "{{ out }}/{{ item.0 }}.{{ item.1 }}"
+            content: "{{ lookup('vars', item.0)[item.1] }}"
