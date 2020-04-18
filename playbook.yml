@@ -114,6 +114,9 @@
               - oscap
               - xccdf
               - eval
+              - --fetch-remote-resources
+              - --cpe
+              - /usr/share/xml/scap/ssg/content/ssg-rhel8-cpe-dictionary.xml
               - --profile
               - xccdf_org.ssgproject.content_profile_ospp
               - --results-arf
