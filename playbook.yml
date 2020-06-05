@@ -1,18 +1,26 @@
 ---
-- hosts: default
+- hosts: all
 
   vars:
+    distro_nicks:
+      "CentOS": centos
+      "Red Hat Enterprise Linux": rhel
+    distro_nick: "{{ distro_nicks[ansible_distribution] }}"
+
+    ssg_profile_id: xccdf_org.ssgproject.content_profile_standard
+
     package_list:
       - openscap-scanner
       - scap-security-guide
 
     output_variable_list:
       - example
-      - rhel_8_profiles
-      - rhel_8_evaluation
+      - rhel_N_profiles
+      - centos_N_profiles
+      - rhel_N_evaluation
+      - centos_N_evaluation
       - existing_rhel_ds_xml_files
-      - ds_files_duplication
-      - ds_files_substitution
+      - existing_centos_ds_xml_files
 
     output_extension_list:
       - json
@@ -21,8 +29,8 @@
 
     remote: /home/vagrant
     local: /vagrant
-    out: "{{ local }}/out"
-    reports: "{{ local }}/reports"
+    out: "{{ local }}/out/{{ inventory_hostname_short }}"
+    reports: "{{ local }}/reports/{{ inventory_hostname_short }}"
 
   tasks:
     - name: local setup
@@ -70,23 +78,15 @@
             patterns:
               - ssg-rhel\d+-ds\.xml
           register: existing_rhel_ds_xml_files
-        - name: centos?-ds.xml files duplication
-          loop_control:
-            label: "{{ remote }}/{{ item.path|basename|replace('rhel','centos',1) }}"
-          loop: "{{ existing_rhel_ds_xml_files.files }}"
-          copy:
-            src: "{{ item.path }}"
-            dest: "{{ remote }}/{{ item.path|basename|replace('rhel','centos',1) }}"
-          register: ds_files_duplication
-        - name: centos?-ds.xml files substitution
-          loop_control:
-            label: "{{ item.dest }}"
-          loop: "{{ ds_files_duplication.results }}"
-          replace:
-            path: "{{ item.dest }}"
-            regexp: \bcpe:/o:redhat:enterprise_linux:(\d+)\b
-            replace: cpe:/o:centos:centos:\g<1>
-          register: ds_files_substitution
+        - name: existing centos?-ds.xml files
+          find:
+            use_regex: yes
+            file_type: file
+            paths:
+              - /usr/share/xml/scap/ssg/content
+            patterns:
+              - ssg-centos\d+-ds\.xml
+          register: existing_centos_ds_xml_files
 
     - name: oscap scanner tests
       become: no
@@ -99,15 +99,26 @@
               - info
               - /usr/share/xml/scap/ssg/content/ssg-rhel6-ds.xml
           register: example
-        - name: rhel 8 profiles
+          ignore_errors: yes
+        - name: "rhel {{ ansible_distribution_major_version }} profiles"
           command:
             argv:
               - oscap
               - info
               - --fetch-remote-resources
-              - /usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml
-          register: rhel_8_profiles
-        - name: rhel 8 evaluation
+              - "/usr/share/xml/scap/ssg/content/ssg-rhel{{ ansible_distribution_major_version }}-ds.xml"
+          register: rhel_N_profiles
+          ignore_errors: yes
+        - name: "centos {{ ansible_distribution_major_version }} profiles"
+          command:
+            argv:
+              - oscap
+              - info
+              - --fetch-remote-resources
+              - "/usr/share/xml/scap/ssg/content/ssg-centos{{ ansible_distribution_major_version }}-ds.xml"
+          register: centos_N_profiles
+          ignore_errors: yes
+        - name: "rhel {{ ansible_distribution_major_version }} evaluation"
           become: yes
           command:
             argv:
@@ -116,15 +127,35 @@
               - eval
               - --fetch-remote-resources
               - --cpe
-              - /usr/share/xml/scap/ssg/content/ssg-rhel8-cpe-dictionary.xml
+              - "/usr/share/xml/scap/ssg/content/ssg-rhel{{ ansible_distribution_major_version }}-cpe-dictionary.xml"
               - --profile
-              - xccdf_org.ssgproject.content_profile_ospp
+              - "{{ ssg_profile_id }}"
               - --results-arf
-              - "{{ reports }}/rhel_8_evaluation.arf.xml"
+              - "{{ reports }}/rhel_{{ ansible_distribution_major_version }}_evaluation.arf.xml"
               - --report
-              - "{{ reports }}/rhel_8_evaluation.report.html"
-              - /usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml
-          register: rhel_8_evaluation
+              - "{{ reports }}/rhel_{{ ansible_distribution_major_version }}_evaluation.report.html"
+              - "/usr/share/xml/scap/ssg/content/ssg-rhel{{ ansible_distribution_major_version }}-ds.xml"
+          register: rhel_N_evaluation
+          ignore_errors: yes
+        - name: "centos {{ ansible_distribution_major_version }} evaluation"
+          become: yes
+          command:
+            argv:
+              - oscap
+              - xccdf
+              - eval
+              - --fetch-remote-resources
+              - --cpe
+              - "/usr/share/xml/scap/ssg/content/ssg-rhel{{ ansible_distribution_major_version }}-cpe-dictionary.xml"
+              - --profile
+              - "{{ ssg_profile_id }}"
+              - --results-arf
+              - "{{ reports }}/centos_{{ ansible_distribution_major_version }}_evaluation.arf.xml"
+              - --report
+              - "{{ reports }}/centos_{{ ansible_distribution_major_version }}_evaluation.report.html"
+              - "/usr/share/xml/scap/ssg/content/ssg-centos{{ ansible_distribution_major_version }}-ds.xml"
+          register: centos_N_evaluation
+          ignore_errors: yes
 
       always:
         - name: copy selinux bug workaround
